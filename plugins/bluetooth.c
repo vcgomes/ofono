@@ -65,6 +65,39 @@ struct cb_data {
 	GIOChannel *io;
 };
 
+static void append_variant(DBusMessageIter *iter, int type, void *val)
+{
+	DBusMessageIter value;
+	char sig[2] = { type, '\0' };
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, sig, &value);
+
+	dbus_message_iter_append_basic(&value, type, val);
+
+	dbus_message_iter_close_container(iter, &value);
+}
+
+static void dict_append_entry(DBusMessageIter *dict, const char *key, int type,
+								void *val)
+{
+	DBusMessageIter entry;
+
+	if (type == DBUS_TYPE_STRING) {
+		const char *str = *((const char **) val);
+		if (str == NULL)
+			return;
+	}
+
+	dbus_message_iter_open_container(dict, DBUS_TYPE_DICT_ENTRY, NULL,
+								&entry);
+
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
+
+	append_variant(&entry, type, val);
+
+	dbus_message_iter_close_container(dict, &entry);
+}
+
 void bluetooth_create_path(const char *dev_addr, const char *adapter_addr,
 				char *buf, int size)
 {
@@ -966,6 +999,110 @@ void bluetooth_unregister_uuid(const char *uuid)
 	g_hash_table_remove(uuid_hash, uuid);
 
 	bluetooth_unref();
+}
+
+static void register_profile_cb(DBusPendingCall *call, gpointer user_data)
+{
+	DBusMessage *reply;
+	DBusError derr;
+
+	reply = dbus_pending_call_steal_reply(call);
+
+	dbus_error_init(&derr);
+
+	if (dbus_set_error_from_message(&derr, reply)) {
+		ofono_error("RegisterProfile() replied an error: %s, %s",
+						derr.name, derr.message);
+		dbus_error_free(&derr);
+		goto done;
+	}
+
+	DBG("");
+
+done:
+	dbus_message_unref(reply);
+}
+
+int bluetooth_register_profile(const char *uuid, const char *name,
+							const char *object)
+{
+	DBusMessageIter iter, dict;
+	DBusPendingCall *c;
+	DBusMessage *msg;
+
+	DBG("Bluetooth: Registering %s (%s) profile", uuid, name);
+
+	msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/org/bluez",
+			BLUEZ_PROFILE_MGMT_INTERFACE, "RegisterProfile");
+
+	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH, &object);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &uuid);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+	dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &name);
+	dbus_message_iter_close_container(&iter, &dict);
+
+	if (!dbus_connection_send_with_reply(connection, msg, &c, -1)) {
+		ofono_error("Sending RegisterProfile failed");
+		dbus_message_unref(msg);
+		return -EIO;
+	}
+
+	dbus_pending_call_set_notify(c, register_profile_cb, NULL, NULL);
+	dbus_pending_call_unref(c);
+
+	dbus_message_unref(msg);
+
+	return 0;
+}
+
+static void unregister_profile_cb(DBusPendingCall *call, gpointer user_data)
+{
+	DBusMessage *reply;
+	DBusError derr;
+
+	reply = dbus_pending_call_steal_reply(call);
+
+	dbus_error_init(&derr);
+
+	if (dbus_set_error_from_message(&derr, reply)) {
+		ofono_error("UnregisterProfile() replied an error: %s, %s",
+						derr.name, derr.message);
+		dbus_error_free(&derr);
+		goto done;
+	}
+
+	DBG("");
+
+done:
+	dbus_message_unref(reply);
+}
+
+void bluetooth_unregister_profile(const char *object)
+{
+	DBusMessageIter iter;
+	DBusPendingCall *c;
+	DBusMessage *msg;
+
+	DBG("Bluetooth: Unregistering profile %s", object);
+
+	msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/org/bluez",
+			BLUEZ_PROFILE_MGMT_INTERFACE, "UnregisterProfile");
+
+	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH, &object);
+
+	if (!dbus_connection_send_with_reply(connection, msg, &c, -1)) {
+		ofono_error("Sending RegisterProfile failed");
+		dbus_message_unref(msg);
+		return;
+	}
+
+	dbus_pending_call_set_notify(c, unregister_profile_cb, NULL, NULL);
+	dbus_pending_call_unref(c);
+
+	dbus_message_unref(msg);
 }
 
 struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,

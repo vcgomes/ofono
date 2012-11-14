@@ -24,6 +24,7 @@
 
 #define	BLUEZ_SERVICE "org.bluez"
 #define	BLUEZ_MANAGER_INTERFACE		BLUEZ_SERVICE ".Manager"
+#define BLUEZ_PROFILE_MGMT_INTERFACE   BLUEZ_SERVICE ".ProfileManager1"
 #define	BLUEZ_ADAPTER_INTERFACE		BLUEZ_SERVICE ".Adapter"
 #define	BLUEZ_DEVICE_INTERFACE		BLUEZ_SERVICE ".Device"
 #define	BLUEZ_SERVICE_INTERFACE		BLUEZ_SERVICE ".Service"
@@ -66,7 +67,9 @@ void bluetooth_get_properties();
 int bluetooth_register_uuid(const char *uuid,
 				struct bluetooth_profile *profile);
 void bluetooth_unregister_uuid(const char *uuid);
-
+int bluetooth_register_profile(const char *uuid, const char *name,
+							const char *object);
+void bluetooth_unregister_profile(const char *object);
 struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
 					ConnectFunc cb, gpointer user_data);
 void bluetooth_unregister_server(struct server *server);

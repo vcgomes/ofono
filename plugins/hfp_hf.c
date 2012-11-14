@@ -54,6 +54,8 @@
 #define HFP_AGENT_INTERFACE "org.bluez.HandsfreeAgent"
 #define HFP_AGENT_ERROR_INTERFACE "org.bluez.Error"
 
+#define HFP_EXT_PROFILE_PATH   "/bluetooth/profile/hfp_hf"
+
 #ifndef DBUS_TYPE_UNIX_FD
 #define DBUS_TYPE_UNIX_FD -1
 #endif
@@ -534,6 +536,14 @@ static int hfp_init(void)
 		return err;
 	}
 
+	err = bluetooth_register_profile(HFP_HS_UUID, "hfp_hf",
+						HFP_EXT_PROFILE_PATH);
+	if (err < 0) {
+		bluetooth_unregister_uuid(HFP_AG_UUID);
+		ofono_modem_driver_unregister(&hfp_driver);
+		return err;
+	}
+
 	modem_hash = g_hash_table_new_full(g_str_hash, g_str_equal,
 						g_free, NULL);
 
@@ -542,6 +552,8 @@ static int hfp_init(void)
 
 static void hfp_exit(void)
 {
+
+	bluetooth_unregister_profile(HFP_EXT_PROFILE_PATH);
 	bluetooth_unregister_uuid(HFP_AG_UUID);
 	ofono_modem_driver_unregister(&hfp_driver);
 
