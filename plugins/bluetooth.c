@@ -749,7 +749,7 @@ static gboolean device_removed(DBusConnection *conn,
 	return TRUE;
 }
 
-static void parse_adapters(DBusMessageIter *array, gpointer user_data)
+static void parse_adapters(DBusMessageIter *array)
 {
 	DBusMessageIter value;
 
@@ -776,26 +776,35 @@ static void parse_adapters(DBusMessageIter *array, gpointer user_data)
 	}
 }
 
-static void manager_properties_cb(DBusPendingCall *call, gpointer user_data)
+static void adapters_objects_cb(DBusPendingCall *call, gpointer user_data)
 {
 	DBusMessage *reply;
 	DBusError derr;
+	DBusMessageIter array, variant;
+
+	DBG("");
 
 	reply = dbus_pending_call_steal_reply(call);
 
 	dbus_error_init(&derr);
 
 	if (dbus_set_error_from_message(&derr, reply)) {
-		ofono_error("Manager.GetProperties() replied an error: %s, %s",
+		ofono_error("Get(\"%s\", \"Adapters\") replied an error: %s, "
+					"%s", FREEDESKTOP_PROPERTIES_INTERFACE,
 					derr.name, derr.message);
 		dbus_error_free(&derr);
 		goto done;
 	}
 
-	DBG("");
+	if (dbus_message_iter_init(reply, &variant) == FALSE)
+		goto done;
 
-	bluetooth_parse_properties(reply, "Adapters", parse_adapters, NULL,
-						NULL);
+	if (dbus_message_iter_get_arg_type(&variant) != DBUS_TYPE_VARIANT)
+		goto done;
+
+	dbus_message_iter_recurse(&variant, &array);
+
+	parse_adapters(&array);
 
 done:
 	dbus_message_unref(reply);
@@ -803,8 +812,13 @@ done:
 
 static void bluetooth_connect(DBusConnection *conn, void *user_data)
 {
-	bluetooth_send_with_reply("/", BLUEZ_MANAGER_INTERFACE, "GetProperties",
-				NULL, manager_properties_cb, NULL, NULL, -1,
+	const char *interface = BLUEZ_MANAGER_INTERFACE;
+	const char *property = "Adapters";
+
+	bluetooth_send_with_reply("/", FREEDESKTOP_PROPERTIES_INTERFACE, "Get",
+				NULL, adapters_objects_cb, NULL, NULL, -1,
+				DBUS_TYPE_STRING, &interface,
+				DBUS_TYPE_STRING, &property,
 				DBUS_TYPE_INVALID);
 
 	bluetooth_send_with_reply("/", BLUEZ_MANAGER_INTERFACE, "FindAdapter",
