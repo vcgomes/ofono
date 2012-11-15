@@ -299,7 +299,8 @@ static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 	dbus_error_init(&derr);
 
 	if (dbus_set_error_from_message(&derr, reply)) {
-		ofono_error("Device.GetProperties replied an error: %s, %s",
+		ofono_error("%s GetAll(\"%s\") replied an error: %s, %s",
+					path, FREEDESKTOP_PROPERTIES_INTERFACE,
 					derr.name, derr.message);
 		dbus_error_free(&derr);
 		goto done;
@@ -350,6 +351,19 @@ static void parse_devices(DBusMessageIter *array, gpointer user_data)
 	}
 }
 
+static void get_device_properties(const char *path)
+{
+	const char *interface = BLUEZ_DEVICE_INTERFACE;
+
+	DBG("Calling %s GetAll(%s)", path, interface);
+
+	bluetooth_send_with_reply(path, FREEDESKTOP_PROPERTIES_INTERFACE,
+				"GetAll", NULL, device_properties_cb,
+				g_strdup(path), g_free, -1,
+				DBUS_TYPE_STRING, &interface,
+				DBUS_TYPE_INVALID);
+}
+
 static gboolean property_changed(DBusConnection *conn, DBusMessage *msg,
 				void *user_data)
 {
@@ -382,10 +396,7 @@ static gboolean property_changed(DBusConnection *conn, DBusMessage *msg,
 		 * refetch everything again
 		 */
 		if (uuids)
-			bluetooth_send_with_reply(path, BLUEZ_DEVICE_INTERFACE,
-					"GetProperties", NULL,
-					device_properties_cb, g_strdup(path),
-					g_free, -1, DBUS_TYPE_INVALID);
+			get_device_properties(path);
 	} else if (g_str_equal(property, "Alias") == TRUE) {
 		const char *path = dbus_message_get_path(msg);
 		struct bluetooth_profile *profile;
@@ -450,10 +461,7 @@ static void adapter_properties_cb(DBusPendingCall *call, gpointer user_data)
 	for (l = device_list; l; l = l->next) {
 		const char *device = l->data;
 
-		bluetooth_send_with_reply(device, BLUEZ_DEVICE_INTERFACE,
-					"GetProperties", NULL,
-					device_properties_cb, g_strdup(device),
-					g_free, -1, DBUS_TYPE_INVALID);
+		get_device_properties(device);
 	}
 
 done:
