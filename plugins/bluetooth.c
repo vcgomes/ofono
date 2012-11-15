@@ -429,7 +429,8 @@ static void adapter_properties_cb(DBusPendingCall *call, gpointer user_data)
 	dbus_error_init(&derr);
 
 	if (dbus_set_error_from_message(&derr, reply)) {
-		ofono_error("Adapter.GetProperties replied an error: %s, %s",
+		ofono_error("%s GetAll(\"%s\") replied an error: %s, %s",
+					path, FREEDESKTOP_PROPERTIES_INTERFACE,
 					derr.name, derr.message);
 		dbus_error_free(&derr);
 		goto done;
@@ -463,9 +464,15 @@ done:
 static void get_adapter_properties(const char *path, const char *handle,
 						gpointer user_data)
 {
-	bluetooth_send_with_reply(path, BLUEZ_ADAPTER_INTERFACE,
-			"GetProperties", NULL, adapter_properties_cb,
-			g_strdup(path), g_free, -1, DBUS_TYPE_INVALID);
+	const char *interface = BLUEZ_ADAPTER_INTERFACE;
+
+	DBG("Calling %s GetAll(%s)", path, interface);
+
+	bluetooth_send_with_reply(path, FREEDESKTOP_PROPERTIES_INTERFACE,
+				"GetAll", NULL, adapter_properties_cb,
+				g_strdup(path), g_free, -1,
+				DBUS_TYPE_STRING, &interface,
+				DBUS_TYPE_INVALID);
 }
 
 static void remove_record(struct server *server)
@@ -706,9 +713,7 @@ static gboolean adapter_added(DBusConnection *conn, DBusMessage *message,
 	dbus_message_get_args(message, NULL, DBUS_TYPE_OBJECT_PATH, &path,
 				DBUS_TYPE_INVALID);
 
-	bluetooth_send_with_reply(path, BLUEZ_ADAPTER_INTERFACE,
-			"GetProperties", NULL, adapter_properties_cb,
-			g_strdup(path), g_free, -1, DBUS_TYPE_INVALID);
+	get_adapter_properties(path, NULL, NULL);
 
 	return TRUE;
 }
@@ -766,11 +771,7 @@ static void parse_adapters(DBusMessageIter *array)
 
 		dbus_message_iter_get_basic(&value, &path);
 
-		DBG("Calling GetProperties on %s", path);
-
-		bluetooth_send_with_reply(path, BLUEZ_ADAPTER_INTERFACE,
-				"GetProperties", NULL, adapter_properties_cb,
-				g_strdup(path), g_free, -1, DBUS_TYPE_INVALID);
+		get_adapter_properties(path, NULL, NULL);
 
 		dbus_message_iter_next(&value);
 	}
