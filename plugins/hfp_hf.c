@@ -342,10 +342,41 @@ static int hfp_unregister_ofono_handsfree(struct ofono_modem *modem)
 static DBusMessage *profile_new_connection(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
+	struct ofono_modem *modem;
+	const char *device;
+	DBusMessageIter entry;
+	int fd;
+
 	DBG("Profile handler NewConnection");
-	return g_dbus_create_error(msg, BLUEZ_ERROR_INTERFACE
-					".NotImplemented",
-					"Implementation not provided");
+
+	if (dbus_message_iter_init(msg, &entry) == FALSE)
+		goto error;
+
+	if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_OBJECT_PATH)
+		goto error;
+
+	dbus_message_iter_get_basic(&entry, &device);
+	modem = g_hash_table_lookup(modem_hash, device);
+	if (modem == NULL) {
+		DBG("%s: modem not found", device);
+		goto error;
+	}
+
+	dbus_message_iter_next(&entry);
+	if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_UNIX_FD)
+		goto error;
+
+	dbus_message_iter_get_basic(&entry, &fd);
+	if (fd < 0)
+		goto error;
+
+	DBG("modem %p, SLC FD: %d", modem, fd);
+
+	return dbus_message_new_method_return(msg);
+
+error:
+	return g_dbus_create_error(msg, BLUEZ_ERROR_INTERFACE ".Rejected",
+					"Invalid arguments in method call");
 }
 
 static DBusMessage *profile_release(DBusConnection *conn,
