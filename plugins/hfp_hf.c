@@ -101,9 +101,10 @@ static void slc_failed(gpointer userdata)
 	struct hfp_data *data = ofono_modem_get_data(modem);
 	DBusMessage *msg;
 
-	msg = g_dbus_create_error(data->slc_msg, HFP_AGENT_ERROR_INTERFACE
-					".Failed",
-					"HFP Handshake failed");
+	msg = g_dbus_create_error(data->slc_msg, BLUEZ_ERROR_INTERFACE
+						".Failed",
+						"HFP Handshake failed");
+
 	g_dbus_send_message(connection, msg);
 	dbus_message_unref(data->slc_msg);
 	data->slc_msg = NULL;
@@ -343,9 +344,11 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	struct ofono_modem *modem;
+	struct hfp_data *hfp_data;
 	const char *device;
 	DBusMessageIter entry;
-	int fd;
+	int fd, err;
+	guint16 version = 0x0105;
 
 	DBG("Profile handler NewConnection");
 
@@ -370,9 +373,18 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	if (fd < 0)
 		goto error;
 
-	DBG("modem %p, SLC FD: %d", modem, fd);
+	hfp_data = ofono_modem_get_data(modem);
+	DBG("modem %p, hfp_data: %p SLC FD: %d", modem, hfp_data, fd);
 
-	return dbus_message_new_method_return(msg);
+	hfp_slc_info_init(&hfp_data->info, version);
+
+	err = service_level_connection(modem, fd);
+	if (err < 0 && err != -EINPROGRESS)
+		return __ofono_error_failed(msg);
+
+	hfp_data->slc_msg = dbus_message_ref(msg);
+
+	return NULL;
 
 error:
 	return g_dbus_create_error(msg, BLUEZ_ERROR_INTERFACE ".Rejected",
