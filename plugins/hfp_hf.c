@@ -395,9 +395,13 @@ static DBusMessage *profile_release(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	DBG("Profile handler Release");
-	return g_dbus_create_error(msg, BLUEZ_ERROR_INTERFACE
-					".NotImplemented",
-					"Implementation not provided");
+
+	g_dbus_unregister_interface(connection, HFP_EXT_PROFILE_PATH,
+						BLUEZ_PROFILE_INTERFACE);
+
+	g_hash_table_foreach_remove(modem_hash, hfp_remove_modem, NULL);
+
+	return dbus_message_new_method_return(msg);
 }
 
 static DBusMessage *profile_cancel(DBusConnection *conn,
