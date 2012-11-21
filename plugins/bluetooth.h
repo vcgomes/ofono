@@ -84,7 +84,8 @@ int bluetooth_send_with_reply(const char *path, const char *interface,
 				DBusPendingCallNotifyFunction cb,
 				void *user_data, DBusFreeFunction free_func,
 				int timeout, int type, ...);
-void bluetooth_parse_properties(DBusMessage *reply, const char *property, ...);
+void bluetooth_parse_properties(DBusMessageIter *array,
+						const char *property, ...);
 
 int bluetooth_sap_client_register(struct bluetooth_sap_driver *sap,
 					struct ofono_modem *modem);

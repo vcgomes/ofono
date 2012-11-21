@@ -195,11 +195,14 @@ static gint property_handler_compare(gconstpointer a, gconstpointer b)
 	return strcmp(handler->property, property);
 }
 
-void bluetooth_parse_properties(DBusMessage *reply, const char *property, ...)
+void bluetooth_parse_properties(DBusMessageIter *array, const char *property, ...)
 {
 	va_list args;
 	GSList *prop_handlers = NULL;
-	DBusMessageIter array, dict;
+	DBusMessageIter dict;
+
+	if (dbus_message_iter_get_arg_type(array) != DBUS_TYPE_ARRAY)
+		goto done;
 
 	va_start(args, property);
 
@@ -218,13 +221,7 @@ void bluetooth_parse_properties(DBusMessage *reply, const char *property, ...)
 
 	va_end(args);
 
-	if (dbus_message_iter_init(reply, &array) == FALSE)
-		goto done;
-
-	if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_ARRAY)
-		goto done;
-
-	dbus_message_iter_recurse(&array, &dict);
+	dbus_message_iter_recurse(array, &dict);
 
 	while (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_DICT_ENTRY) {
 		DBusMessageIter entry, value;
@@ -324,6 +321,7 @@ static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 	const char *adapter_addr = NULL;
 	const char *device_addr = NULL;
 	const char *alias = NULL;
+	DBusMessageIter iter;
 	struct DBusError derr;
 	GSList *uuids = NULL;
 
@@ -341,7 +339,10 @@ static void device_properties_cb(DBusPendingCall *call, gpointer user_data)
 
 	DBG("");
 
-	bluetooth_parse_properties(reply, "UUIDs", parse_uuids, &uuids,
+	if (dbus_message_iter_init(reply, &iter) == FALSE)
+		goto done;
+
+	bluetooth_parse_properties(&iter, "UUIDs", parse_uuids, &uuids,
 				"Adapter", parse_string, &adapter,
 				"Address", parse_string, &device_addr,
 				"Alias", parse_string, &alias, NULL);
@@ -480,6 +481,7 @@ static void adapter_properties_cb(DBusPendingCall *call, gpointer user_data)
 {
 	const char *path = user_data;
 	DBusMessage *reply;
+	DBusMessageIter iter;
 	DBusError derr;
 	GSList *device_list = NULL;
 	GSList *l;
@@ -499,7 +501,10 @@ static void adapter_properties_cb(DBusPendingCall *call, gpointer user_data)
 
 	DBG("");
 
-	bluetooth_parse_properties(reply,
+	if (dbus_message_iter_init(reply, &iter) == FALSE)
+		goto done;
+
+	bluetooth_parse_properties(&iter,
 					"Devices", parse_devices, &device_list,
 					"Address", parse_string, &addr,
 					NULL);
