@@ -79,6 +79,16 @@ static void hfp_data_free(gpointer user_data)
 	g_free(hfp_data);
 }
 
+static void parse_guint16(DBusMessageIter *iter, gpointer user_data)
+{
+	guint16 *value = user_data;
+
+	if (dbus_message_iter_get_arg_type(iter) !=  DBUS_TYPE_UINT16)
+		return;
+
+	dbus_message_iter_get_basic(iter, value);
+}
+
 static void hfp_debug(const char *str, void *user_data)
 {
 	const char *prefix = user_data;
@@ -172,11 +182,11 @@ static int service_level_connection(struct ofono_modem *modem, int fd)
 	return -EINPROGRESS;
 }
 
-static int modem_register(const char *device, struct hfp_data *hfp_data, int fd)
+static int modem_register(const char *device, struct hfp_data *hfp_data,
+							int fd, guint16 version)
 {
 	struct ofono_modem *modem;
 	char buf[256];
-	guint16 version = 0x0105;
 
 	/* We already have this device in our hash, ignore */
 	if (g_hash_table_lookup(modem_hash, device) != NULL)
@@ -294,6 +304,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	const char *device;
 	DBusMessageIter entry;
 	int fd, err;
+	guint16 version = 0x0105, features = 0x0000;
 
 	DBG("Profile handler NewConnection");
 
@@ -318,9 +329,17 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	if (fd < 0)
 		goto error;
 
-	DBG("hfp_data: %p SLC FD: %d", hfp_data, fd);
+	dbus_message_iter_next(&entry);
 
-	err = modem_register(device, hfp_data, fd);
+	bluetooth_parse_properties(&entry,
+					"Version", parse_guint16, &version,
+					"Features", parse_guint16, &features,
+					NULL);
+
+	DBG("hfp_data: %p SLC FD: %d Version: 0x%04x Features: 0x%04x",
+					hfp_data, fd, version, features);
+
+	err = modem_register(device, hfp_data, fd, version);
 	if (err < 0 && err != -EINPROGRESS)
 		return __ofono_error_failed(msg);
 
