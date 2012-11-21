@@ -57,12 +57,27 @@
 
 static DBusConnection *connection;
 static GHashTable *modem_hash = NULL;
+static GHashTable *hfp_hash = NULL;
 
 struct hfp_data {
 	struct hfp_slc_info info;
-	char *handsfree_address;
+	gchar *device_address;
+	gchar *adapter_address;
+	gchar *device_alias;
+	gchar *device_path;
 	DBusMessage *slc_msg;
 };
+
+static void hfp_data_free(gpointer user_data)
+{
+	struct hfp_data *hfp_data = user_data;
+
+	g_free(hfp_data->device_address);
+	g_free(hfp_data->adapter_address);
+	g_free(hfp_data->device_alias);
+	g_free(hfp_data->device_path);
+	g_free(hfp_data);
+}
 
 static void hfp_debug(const char *str, void *user_data)
 {
@@ -117,6 +132,10 @@ static void hfp_disconnected_cb(gpointer user_data)
 
 	g_at_chat_unref(data->info.chat);
 	data->info.chat = NULL;
+
+	g_hash_table_remove(modem_hash, data->device_path);
+
+	ofono_modem_remove(modem);
 }
 
 /* either oFono or Phone could request SLC connection */
@@ -153,46 +172,72 @@ static int service_level_connection(struct ofono_modem *modem, int fd)
 	return -EINPROGRESS;
 }
 
-static int hfp_hf_probe(const char *device, const char *dev_addr,
-				const char *adapter_addr, const char *alias)
+static int modem_register(const char *device, struct hfp_data *hfp_data, int fd)
 {
 	struct ofono_modem *modem;
-	struct hfp_data *data;
 	char buf[256];
+	guint16 version = 0x0105;
 
 	/* We already have this device in our hash, ignore */
 	if (g_hash_table_lookup(modem_hash, device) != NULL)
 		return -EALREADY;
 
-	ofono_info("Using device: %s, devaddr: %s, adapter: %s",
-			device, dev_addr, adapter_addr);
-
 	strcpy(buf, "hfp/");
-	bluetooth_create_path(dev_addr, adapter_addr, buf + 4, sizeof(buf) - 4);
+	bluetooth_create_path(hfp_data->device_address,
+			hfp_data->adapter_address, buf + 4, sizeof(buf) - 4);
 
 	modem = ofono_modem_create(buf, "hfp");
 	if (modem == NULL)
 		return -ENOMEM;
 
-	data = g_try_new0(struct hfp_data, 1);
-	if (data == NULL)
-		goto free;
-
-	data->handsfree_address = g_strdup(dev_addr);
-	if (data->handsfree_address == NULL)
-		goto free;
-
-	ofono_modem_set_data(modem, data);
-	ofono_modem_set_name(modem, alias);
+	ofono_modem_set_data(modem, hfp_data);
+	ofono_modem_set_name(modem, hfp_data->device_alias);
 	ofono_modem_register(modem);
 
 	g_hash_table_insert(modem_hash, g_strdup(device), modem);
 
+	hfp_slc_info_init(&hfp_data->info, version);
+
+	return service_level_connection(modem, fd);
+}
+
+static int hfp_hf_probe(const char *device, const char *dev_addr,
+				const char *adapter_addr, const char *alias)
+{
+	struct hfp_data *hfp_data;
+
+	if (g_hash_table_lookup(hfp_hash, device) != NULL)
+		return -EALREADY;
+
+	ofono_info("Using device: %s, devaddr: %s, adapter: %s",
+					device, dev_addr, adapter_addr);
+
+	hfp_data = g_try_new0(struct hfp_data, 1);
+	if (hfp_data == NULL)
+		goto free;
+
+	hfp_data->adapter_address = g_strdup(adapter_addr);
+	if (hfp_data->adapter_address == NULL)
+		goto free;
+
+	hfp_data->device_address = g_strdup(dev_addr);
+	if (hfp_data->device_address == NULL)
+		goto free;
+
+	hfp_data->device_path = g_strdup(device);
+	if (hfp_data->device_path == NULL)
+		goto free;
+
+	hfp_data->device_alias = g_strdup(alias);
+	if (hfp_data->device_alias == NULL)
+		goto free;
+
+	g_hash_table_insert(hfp_hash, g_strdup(device), hfp_data);
+
 	return 0;
 
 free:
-	g_free(data);
-	ofono_modem_remove(modem);
+	hfp_data_free(hfp_data);
 
 	return -ENOMEM;
 }
@@ -240,12 +285,10 @@ static void hfp_hf_set_alias(const char *device, const char *alias)
 static DBusMessage *profile_new_connection(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
-	struct ofono_modem *modem;
 	struct hfp_data *hfp_data;
 	const char *device;
 	DBusMessageIter entry;
 	int fd, err;
-	guint16 version = 0x0105;
 
 	DBG("Profile handler NewConnection");
 
@@ -256,9 +299,9 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 		goto error;
 
 	dbus_message_iter_get_basic(&entry, &device);
-	modem = g_hash_table_lookup(modem_hash, device);
-	if (modem == NULL) {
-		DBG("%s: modem not found", device);
+	hfp_data = g_hash_table_lookup(hfp_hash, device);
+	if (hfp_data == NULL) {
+		DBG("%s: doesn't support HFP", device);
 		goto error;
 	}
 
@@ -270,12 +313,9 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	if (fd < 0)
 		goto error;
 
-	hfp_data = ofono_modem_get_data(modem);
-	DBG("modem %p, hfp_data: %p SLC FD: %d", modem, hfp_data, fd);
+	DBG("hfp_data: %p SLC FD: %d", hfp_data, fd);
 
-	hfp_slc_info_init(&hfp_data->info, version);
-
-	err = service_level_connection(modem, fd);
+	err = modem_register(device, hfp_data, fd);
 	if (err < 0 && err != -EINPROGRESS)
 		return __ofono_error_failed(msg);
 
@@ -341,14 +381,7 @@ static int hfp_probe(struct ofono_modem *modem)
 
 static void hfp_remove(struct ofono_modem *modem)
 {
-	struct hfp_data *data = ofono_modem_get_data(modem);
-
 	DBG("modem: %p", modem);
-
-	g_free(data->handsfree_address);
-	g_free(data);
-
-	ofono_modem_set_data(modem, NULL);
 }
 
 /* power up hardware */
@@ -382,7 +415,7 @@ static void hfp_pre_sim(struct ofono_modem *modem)
 
 	DBG("%p", modem);
 
-	ofono_devinfo_create(modem, 0, "hfpmodem", data->handsfree_address);
+	ofono_devinfo_create(modem, 0, "hfpmodem", data->device_address);
 	ofono_voicecall_create(modem, 0, "hfpmodem", &data->info);
 	ofono_netreg_create(modem, 0, "hfpmodem", &data->info);
 	ofono_call_volume_create(modem, 0, "hfpmodem", &data->info);
@@ -456,6 +489,9 @@ static int hfp_init(void)
 	modem_hash = g_hash_table_new_full(g_str_hash, g_str_equal,
 						g_free, NULL);
 
+	hfp_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+								hfp_data_free);
+
 	return 0;
 }
 
@@ -468,6 +504,7 @@ static void hfp_exit(void)
 	ofono_modem_driver_unregister(&hfp_driver);
 
 	g_hash_table_destroy(modem_hash);
+	g_hash_table_destroy(hfp_hash);
 }
 
 OFONO_PLUGIN_DEFINE(hfp, "Hands-Free Profile Plugins", VERSION,
