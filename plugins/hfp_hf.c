@@ -271,15 +271,20 @@ static void hfp_hf_remove(const char *prefix)
 static void hfp_hf_set_alias(const char *device, const char *alias)
 {
 	struct ofono_modem *modem;
+	struct hfp_data *hfp_data;
 
 	if (device == NULL || alias == NULL)
 		return;
 
-	modem =	g_hash_table_lookup(modem_hash, device);
-	if (modem == NULL)
-		return;
+	hfp_data = g_hash_table_lookup(hfp_hash, device);
+	if (hfp_data) {
+		g_free(hfp_data->device_alias);
+		hfp_data->device_alias = g_strdup(alias);
+	}
 
-	ofono_modem_set_name(modem, alias);
+	modem =	g_hash_table_lookup(modem_hash, device);
+	if (modem)
+		ofono_modem_set_name(modem, alias);
 }
 
 static DBusMessage *profile_new_connection(DBusConnection *conn,
