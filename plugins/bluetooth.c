@@ -401,8 +401,9 @@ static void get_device_properties(const char *path)
 static gboolean properties_changed(DBusConnection *conn, DBusMessage *msg,
 				void *user_data)
 {
-	const char *property, *interface;
-	DBusMessageIter iter, dict, entry, variant;
+	const char *interface, *path, *alias = NULL;
+	DBusMessageIter iter;
+	GSList *uuids = NULL;
 
 	DBG("");
 
@@ -420,59 +421,31 @@ static gboolean properties_changed(DBusConnection *conn, DBusMessage *msg,
 	if (!dbus_message_iter_next(&iter))
 		return FALSE;
 
-	/* Reading Dict entries containing properties */
-	dbus_message_iter_recurse(&iter, &dict);
+	bluetooth_parse_properties(&iter,
+			"UUIDs", parse_uuids, &uuids,
+			"Alias", parse_string, &alias,
+			NULL);
 
-	do {
-		if (dbus_message_iter_get_arg_type(&dict) !=
-						DBUS_TYPE_DICT_ENTRY)
-			return FALSE;
+	path = dbus_message_get_path(msg);
 
-		dbus_message_iter_recurse(&dict, &entry);
+	/* We need the full set of properties to be able to
+	 * create the modem properly, including Adapter and
+	 * Alias, so refetch everything again
+	 */
+	if (uuids)
+		get_device_properties(path);
 
-		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_STRING)
-			return FALSE;
+	if (alias) {
+		GHashTableIter hash_iter;
+		gpointer key, value;
 
-		dbus_message_iter_get_basic(&entry, &property);
-
-		if (!dbus_message_iter_next(&entry))
-			return FALSE;
-
-		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_VARIANT)
-			return FALSE;
-
-		dbus_message_iter_recurse(&entry, &variant);
-		if (g_str_equal(property, "UUIDs") == TRUE) {
-			GSList *uuids = NULL;
-			const char *path = dbus_message_get_path(msg);
-
-			parse_uuids(&variant, &uuids);
-
-			/* We need the full set of properties to be able to
-			 * create the modem properly, including Adapter and
-			 * Alias, so refetch everything again
-			 */
-			if (uuids)
-				get_device_properties(path);
-		} else if (g_str_equal(property, "Alias") == TRUE) {
-			const char *path = dbus_message_get_path(msg);
-			struct bluetooth_profile *profile;
-			const char *alias = NULL;
-			GHashTableIter hash_iter;
-			gpointer key, value;
-
-			parse_string(&variant, &alias);
-
-			g_hash_table_iter_init(&hash_iter, uuid_hash);
-			while (g_hash_table_iter_next(&hash_iter, &key,
-								&value)) {
-				profile = value;
-				if (profile->set_alias)
-					profile->set_alias(path, alias);
-			}
+		g_hash_table_iter_init(&hash_iter, uuid_hash);
+		while (g_hash_table_iter_next(&hash_iter, &key, &value)) {
+			struct bluetooth_profile *profile = value;
+			if (profile->set_alias)
+				profile->set_alias(path, alias);
 		}
-
-	} while (dbus_message_iter_next(&dict));
+	}
 
 	return TRUE;
 }
