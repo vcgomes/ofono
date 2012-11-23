@@ -31,6 +31,8 @@
 #include <unistd.h>
 #include <glib.h>
 #include <gdbus.h>
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/rfcomm.h>
 
 #define OFONO_API_SUBJECT_TO_CHANGE
 #include <ofono/plugin.h>
@@ -1139,6 +1141,30 @@ void bluetooth_unregister_server(struct server *server)
 	g_free(server);
 
 	bluetooth_unref();
+}
+
+int bluetooth_get_address(int fd, char *adapter_address, char *device_address)
+{
+	struct sockaddr_rc saddr;
+	socklen_t alen;
+
+	alen = sizeof(saddr);
+
+	if (adapter_address) {
+		if (getsockname(fd, (struct sockaddr *)&saddr, &alen) < 0)
+			return -errno;
+
+		ba2str(&saddr.rc_bdaddr, adapter_address);
+	}
+
+	if (device_address) {
+		if (getpeername(fd, (struct sockaddr *)&saddr, &alen) < 0)
+			return -errno;
+
+		ba2str(&saddr.rc_bdaddr, device_address);
+	}
+
+	return 0;
 }
 
 OFONO_PLUGIN_DEFINE(bluetooth, "Bluetooth Utils Plugins", VERSION,

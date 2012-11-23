@@ -90,3 +90,5 @@ void bluetooth_parse_properties(DBusMessageIter *array,
 int bluetooth_sap_client_register(struct bluetooth_sap_driver *sap,
 					struct ofono_modem *modem);
 void bluetooth_sap_client_unregister(struct ofono_modem *modem);
+
+int bluetooth_get_address(int fd, char *adapter_address, char *device_address);

@@ -79,6 +79,40 @@ static void hfp_data_free(gpointer user_data)
 	g_free(hfp_data);
 }
 
+static struct hfp_data *hfp_data_new(const gchar *adapter_addr,
+					const gchar *device_addr,
+					const gchar *device_path,
+					const gchar *alias)
+{
+	struct hfp_data *hfp_data;
+
+	hfp_data = g_try_new0(struct hfp_data, 1);
+	if (hfp_data == NULL)
+		return NULL;
+
+	hfp_data->adapter_address = g_strdup(adapter_addr);
+	if (hfp_data->adapter_address == NULL)
+		goto free;
+
+	hfp_data->device_address = g_strdup(device_addr);
+	if (hfp_data->device_address == NULL)
+		goto free;
+
+	hfp_data->device_path = g_strdup(device_path);
+	if (hfp_data->device_path == NULL)
+		goto free;
+
+	hfp_data->device_alias = g_strdup(alias);
+	if (hfp_data->device_alias == NULL)
+		goto free;
+
+	return hfp_data;
+
+free:
+	hfp_data_free(hfp_data);
+	return NULL;
+}
+
 static void parse_guint16(DBusMessageIter *iter, gpointer user_data)
 {
 	guint16 *value = user_data;
@@ -222,34 +256,13 @@ static int hfp_hf_probe(const char *device, const char *dev_addr,
 	ofono_info("Using device: %s, devaddr: %s, adapter: %s",
 					device, dev_addr, adapter_addr);
 
-	hfp_data = g_try_new0(struct hfp_data, 1);
+	hfp_data = hfp_data_new(adapter_addr, dev_addr, device, alias);
 	if (hfp_data == NULL)
-		goto free;
-
-	hfp_data->adapter_address = g_strdup(adapter_addr);
-	if (hfp_data->adapter_address == NULL)
-		goto free;
-
-	hfp_data->device_address = g_strdup(dev_addr);
-	if (hfp_data->device_address == NULL)
-		goto free;
-
-	hfp_data->device_path = g_strdup(device);
-	if (hfp_data->device_path == NULL)
-		goto free;
-
-	hfp_data->device_alias = g_strdup(alias);
-	if (hfp_data->device_alias == NULL)
-		goto free;
+		return -ENOMEM;
 
 	g_hash_table_insert(hfp_hash, g_strdup(device), hfp_data);
 
 	return 0;
-
-free:
-	hfp_data_free(hfp_data);
-
-	return -ENOMEM;
 }
 
 static gboolean hfp_remove_modem(gpointer key, gpointer value,
@@ -315,12 +328,6 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 		goto error;
 
 	dbus_message_iter_get_basic(&entry, &device);
-	hfp_data = g_hash_table_lookup(hfp_hash, device);
-	if (hfp_data == NULL) {
-		DBG("%s: doesn't support HFP", device);
-		goto error;
-	}
-
 	dbus_message_iter_next(&entry);
 	if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_UNIX_FD)
 		goto error;
@@ -335,6 +342,25 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 					"Version", parse_guint16, &version,
 					"Features", parse_guint16, &features,
 					NULL);
+
+	hfp_data = g_hash_table_lookup(hfp_hash, device);
+	if (hfp_data == NULL) {
+		char adapter_address[18], device_address[18];
+
+		/*
+		 * Incoming connection notification can arrive before
+		 * the Bluetooth device creation finishes.
+		 */
+		if (bluetooth_get_address(fd, adapter_address,
+							device_address) < 0)
+			return g_dbus_create_error(msg,
+					BLUEZ_ERROR_INTERFACE ".Rejected",
+					"Invalid arguments in method call");
+
+		hfp_data = hfp_data_new(adapter_address, device_address,
+						device, device_address);
+		g_hash_table_insert(hfp_hash, g_strdup(device), hfp_data);
+	}
 
 	DBG("hfp_data: %p SLC FD: %d Version: 0x%04x Features: 0x%04x",
 					hfp_data, fd, version, features);
