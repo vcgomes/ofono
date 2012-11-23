@@ -45,7 +45,7 @@ static GHashTable *adapter_address_hash = NULL;
 static gint bluetooth_refcount;
 static GSList *server_list = NULL;
 static const char *adapter_any_name = "any";
-static char *adapter_any_path;
+static char *adapter_any_path = NULL;
 
 #define TIMEOUT 60 /* Timeout for user response (seconds) */
 
@@ -733,6 +733,7 @@ static void find_adapter_cb(DBusPendingCall *call, gpointer user_data)
 	dbus_message_get_args(reply, NULL, DBUS_TYPE_OBJECT_PATH, &path,
 					DBUS_TYPE_INVALID);
 
+	g_free(adapter_any_path);
 	adapter_any_path = g_strdup(path);
 
 	g_slist_foreach(server_list, (GFunc) add_record, NULL);
