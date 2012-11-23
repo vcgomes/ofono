@@ -434,8 +434,10 @@ static gboolean properties_changed(DBusConnection *conn, DBusMessage *msg,
 	 * create the modem properly, including Adapter and
 	 * Alias, so refetch everything again
 	 */
-	if (uuids)
+	if (uuids) {
 		get_device_properties(path);
+		g_slist_free(uuids);
+	}
 
 	if (alias) {
 		GHashTableIter hash_iter;
