@@ -639,7 +639,7 @@ static void auth_cb(DBusPendingCall *call, gpointer user_data)
 	dbus_message_unref(reply);
 }
 
-static void new_connection(GIOChannel *io, gpointer user_data)
+static void new_serial_connection(GIOChannel *io, gpointer user_data)
 {
 	struct server *server = user_data;
 	struct cb_data *cbd;
@@ -1187,7 +1187,7 @@ void bluetooth_unregister_profile(const char *object)
 	bluetooth_unref();
 }
 
-struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
+struct server *bluetooth_register_serial(guint8 channel, const char *sdp_record,
 					ConnectFunc cb, gpointer user_data)
 {
 	struct server *server;
@@ -1199,7 +1199,7 @@ struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
 
 	server->channel = channel;
 
-	server->io = bt_io_listen(BT_IO_RFCOMM, NULL, new_connection,
+	server->io = bt_io_listen(BT_IO_RFCOMM, NULL, new_serial_connection,
 					server, NULL, &err,
 					BT_IO_OPT_CHANNEL, server->channel,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
@@ -1226,7 +1226,7 @@ struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
 	return server;
 }
 
-void bluetooth_unregister_server(struct server *server)
+void bluetooth_unregister_serial(struct server *server)
 {
 	server_list = g_slist_remove(server_list, server);
 
@@ -1239,6 +1239,59 @@ void bluetooth_unregister_server(struct server *server)
 	}
 
 	g_free(server->sdp_record);
+	g_free(server);
+
+	bluetooth_unref();
+}
+
+static void sco_confirm_cb(GIOChannel *io, gpointer user_data)
+{
+	struct server *server = user_data;
+	GError *gerr = NULL;
+
+	if (!bt_io_accept(io, server->connect_cb, user_data, NULL, &gerr)) {
+		ofono_error("bt_io_accept() failed: %s\n", gerr->message);
+		server->connect_cb(io, gerr, server->user_data);
+		g_clear_error(&gerr);
+		return;
+	}
+}
+
+struct server *bluetooth_register_sco(ConnectFunc cncb, gpointer user_data)
+{
+	struct server *server;
+
+	server = g_try_new0(struct server, 1);
+	if (!server)
+		return NULL;
+
+	server->io = bt_io_listen(BT_IO_SCO, NULL, sco_confirm_cb,
+					server, NULL, NULL, BT_IO_OPT_INVALID);
+	if (server->io == NULL) {
+		g_free(server);
+		return NULL;
+	}
+
+	bluetooth_ref();
+
+	server->connect_cb = cncb;
+	server->user_data = user_data;
+
+	server_list = g_slist_prepend(server_list, server);
+
+	return server;
+}
+
+void bluetooth_unregister_sco(struct server *server)
+{
+	server_list = g_slist_remove(server_list, server);
+
+	if (server->io != NULL) {
+		g_io_channel_shutdown(server->io, TRUE, NULL);
+		g_io_channel_unref(server->io);
+		server->io = NULL;
+	}
+
 	g_free(server);
 
 	bluetooth_unref();

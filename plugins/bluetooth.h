@@ -72,9 +72,12 @@ void bluetooth_unregister_uuid(const char *uuid);
 int bluetooth_register_profile(const char *uuid, const char *name,
 							const char *object);
 void bluetooth_unregister_profile(const char *object);
-struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
+struct server *bluetooth_register_serial(guint8 channel, const char *sdp_record,
 					ConnectFunc cb, gpointer user_data);
-void bluetooth_unregister_server(struct server *server);
+void bluetooth_unregister_serial(struct server *server);
+struct server *bluetooth_register_sco(ConnectFunc cncb, gpointer user_data);
+void bluetooth_unregister_sco(struct server *server);
+
 
 void bluetooth_create_path(const char *dev_addr, const char *adapter_addr,
 							char *buf, int size);

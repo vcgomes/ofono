@@ -123,7 +123,7 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *data)
 	if (new_state != OFONO_SIM_STATE_READY) {
 		modems = g_list_remove(modems, modem);
 		if (modems == NULL && server != NULL) {
-			bluetooth_unregister_server(server);
+			bluetooth_unregister_serial(server);
 			server = NULL;
 		}
 
@@ -138,7 +138,7 @@ static void sim_state_watch(enum ofono_sim_state new_state, void *data)
 	if (modems->next != NULL)
 		return;
 
-	server = bluetooth_register_server(HFP_AG_CHANNEL, hfp_ag_record,
+	server = bluetooth_register_serial(HFP_AG_CHANNEL, hfp_ag_record,
 						hfp_ag_connect_cb, NULL);
 }
 
@@ -208,7 +208,7 @@ static void hfp_ag_exit(void)
 	g_hash_table_destroy(sim_hash);
 
 	if (server) {
-		bluetooth_unregister_server(server);
+		bluetooth_unregister_serial(server);
 		server = NULL;
 	}
 }

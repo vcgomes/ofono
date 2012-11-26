@@ -116,14 +116,14 @@ static void gprs_watch(struct ofono_atom *atom,
 		modems = g_list_append(modems, modem);
 
 		if (modems->next == NULL)
-			server = bluetooth_register_server(DUN_GW_CHANNEL,
+			server = bluetooth_register_serial(DUN_GW_CHANNEL,
 					dun_record,
 					dun_gw_connect_cb,
 					NULL);
 	} else {
 		modems = g_list_remove(modems, modem);
 		if (modems == NULL && server != NULL) {
-			bluetooth_unregister_server(server);
+			bluetooth_unregister_serial(server);
 			server = NULL;
 		}
 	}
@@ -162,7 +162,7 @@ static void dun_gw_exit(void)
 	g_list_free(modems);
 
 	if (server) {
-		bluetooth_unregister_server(server);
+		bluetooth_unregister_serial(server);
 		server = NULL;
 	}
 }
