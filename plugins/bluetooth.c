@@ -43,6 +43,7 @@
 
 static DBusConnection *connection;
 static GHashTable *uuid_hash = NULL;
+static GHashTable *external_profile_hash = NULL;
 static GHashTable *adapter_address_hash = NULL;
 static gint bluetooth_refcount;
 static GSList *server_list = NULL;
@@ -66,6 +67,37 @@ struct cb_data {
 	guint source;
 	GIOChannel *io;
 };
+
+struct external_profile {
+	gboolean registered;
+	gchar *uuid;
+	gchar *name;
+	gchar *object;
+};
+
+static void external_profile_free(gpointer user_data)
+{
+	struct external_profile *eprofile = user_data;
+
+	g_free(eprofile->uuid);
+	g_free(eprofile->name);
+	g_free(eprofile->object);
+	g_free(eprofile);
+}
+
+static struct external_profile *external_profile_new(const gchar *uuid,
+						const gchar *name,
+						const gchar *object)
+{
+	struct external_profile *eprofile;
+
+	eprofile = g_new0(struct external_profile, 1);
+	eprofile->uuid = g_strdup(uuid);
+	eprofile->name = g_strdup(name);
+	eprofile->object = g_strdup(object);
+
+	return eprofile;
+}
 
 static void append_variant(DBusMessageIter *iter, int type, void *val)
 {
@@ -852,6 +884,90 @@ done:
 	dbus_message_unref(reply);
 }
 
+static void profile_register_cb(DBusPendingCall *call, gpointer user_data)
+{
+	struct external_profile *eprofile = user_data;
+	DBusMessage *reply;
+	DBusError derr;
+
+	reply = dbus_pending_call_steal_reply(call);
+
+	dbus_error_init(&derr);
+
+	if (dbus_set_error_from_message(&derr, reply)) {
+		ofono_error("RegisterProfile() replied an error: %s, %s",
+						derr.name, derr.message);
+		dbus_error_free(&derr);
+		eprofile->registered = FALSE;
+		goto done;
+	}
+
+	DBG("");
+
+done:
+	dbus_message_unref(reply);
+}
+
+static int external_profile_register(const char *uuid, const char *name,
+					const char *object, gpointer user_data)
+{
+	DBusMessageIter iter, dict;
+	DBusPendingCall *c;
+	DBusMessage *msg;
+
+	DBG("Bluetooth: Registering %s (%s) profile", uuid, name);
+
+	msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/org/bluez",
+			BLUEZ_PROFILE_MGMT_INTERFACE, "RegisterProfile");
+
+	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_append_basic(&iter,
+			DBUS_TYPE_OBJECT_PATH, &object);
+	dbus_message_iter_append_basic(&iter,
+			DBUS_TYPE_STRING, &uuid);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+	dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &name);
+
+	dbus_message_iter_close_container(&iter, &dict);
+
+	if (!dbus_connection_send_with_reply(connection, msg, &c, -1)) {
+		ofono_error("Sending RegisterProfile failed");
+		dbus_message_unref(msg);
+		return -EIO;
+	}
+
+	dbus_pending_call_set_notify(c, profile_register_cb, user_data, NULL);
+	dbus_pending_call_unref(c);
+
+	dbus_message_unref(msg);
+
+	return 0;
+}
+
+static void external_profile_foreach(gpointer key, gpointer value,
+							gpointer user_data)
+{
+	struct external_profile *eprofile = value;
+	const char *uuid = key;
+
+	if (eprofile->registered)
+		return;
+
+	if (external_profile_register(uuid, eprofile->name, eprofile->object,
+								eprofile) < 0)
+		return;
+
+	eprofile->registered = TRUE;
+}
+static void external_profile_set_unregistered(gpointer key, gpointer value,
+							gpointer user_data)
+{
+	struct external_profile *eprofile = value;
+
+	eprofile->registered = FALSE;
+}
+
 static void bluetooth_connect(DBusConnection *conn, void *user_data)
 {
 	const char *interface = BLUEZ_MANAGER_INTERFACE;
@@ -867,6 +983,8 @@ static void bluetooth_connect(DBusConnection *conn, void *user_data)
 				NULL, find_adapter_cb, NULL, NULL, -1,
 				DBUS_TYPE_STRING, &adapter_any_name,
 				DBUS_TYPE_INVALID);
+
+	g_hash_table_foreach(external_profile_hash, external_profile_foreach, NULL);
 }
 
 static void bluetooth_disconnect(DBusConnection *conn, void *user_data)
@@ -875,6 +993,8 @@ static void bluetooth_disconnect(DBusConnection *conn, void *user_data)
 		return;
 
 	g_hash_table_foreach(uuid_hash, bluetooth_remove, NULL);
+	g_hash_table_foreach(external_profile_hash,
+				external_profile_set_unregistered, NULL);
 
 	g_slist_foreach(server_list, (GFunc) remove_service_handle, NULL);
 }
@@ -927,6 +1047,9 @@ static void bluetooth_ref(void)
 	uuid_hash = g_hash_table_new_full(g_str_hash, g_str_equal,
 						g_free, NULL);
 
+	external_profile_hash = g_hash_table_new_full(g_str_hash, g_str_equal,
+						g_free, external_profile_free);
+
 	adapter_address_hash = g_hash_table_new_full(g_str_hash, g_str_equal,
 						g_free, g_free);
 
@@ -956,6 +1079,7 @@ static void bluetooth_unref(void)
 	g_dbus_remove_watch(connection, property_watch);
 
 	g_hash_table_destroy(uuid_hash);
+	g_hash_table_destroy(external_profile_hash);
 	g_hash_table_destroy(adapter_address_hash);
 }
 
@@ -984,58 +1108,24 @@ void bluetooth_unregister_uuid(const char *uuid)
 	bluetooth_unref();
 }
 
-static void register_profile_cb(DBusPendingCall *call, gpointer user_data)
-{
-	DBusMessage *reply;
-	DBusError derr;
-
-	reply = dbus_pending_call_steal_reply(call);
-
-	dbus_error_init(&derr);
-
-	if (dbus_set_error_from_message(&derr, reply)) {
-		ofono_error("RegisterProfile() replied an error: %s, %s",
-						derr.name, derr.message);
-		dbus_error_free(&derr);
-		goto done;
-	}
-
-	DBG("");
-
-done:
-	dbus_message_unref(reply);
-}
-
 int bluetooth_register_profile(const char *uuid, const char *name,
 							const char *object)
 {
-	DBusMessageIter iter, dict;
-	DBusPendingCall *c;
-	DBusMessage *msg;
+	struct external_profile *eprofile;
+	int err;
 
-	DBG("Bluetooth: Registering %s (%s) profile", uuid, name);
+	bluetooth_ref();
 
-	msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/org/bluez",
-			BLUEZ_PROFILE_MGMT_INTERFACE, "RegisterProfile");
-
-	dbus_message_iter_init_append(msg, &iter);
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH, &object);
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &uuid);
-
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
-	dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &name);
-	dbus_message_iter_close_container(&iter, &dict);
-
-	if (!dbus_connection_send_with_reply(connection, msg, &c, -1)) {
-		ofono_error("Sending RegisterProfile failed");
-		dbus_message_unref(msg);
+	eprofile = external_profile_new(uuid, name, object);
+	err = external_profile_register(uuid, name, object, eprofile);
+	if (err < 0) {
+		external_profile_free(eprofile);
+		bluetooth_unref();
 		return -EIO;
 	}
 
-	dbus_pending_call_set_notify(c, register_profile_cb, NULL, NULL);
-	dbus_pending_call_unref(c);
-
-	dbus_message_unref(msg);
+	eprofile->registered = TRUE;
+	g_hash_table_insert(external_profile_hash, g_strdup(uuid), eprofile);
 
 	return 0;
 }
@@ -1064,11 +1154,16 @@ done:
 
 void bluetooth_unregister_profile(const char *object)
 {
+	struct external_profile *eprofile;
 	DBusMessageIter iter;
 	DBusPendingCall *c;
 	DBusMessage *msg;
 
 	DBG("Bluetooth: Unregistering profile %s", object);
+
+	eprofile = g_hash_table_lookup(external_profile_hash, object);
+	if (eprofile == NULL)
+		return;
 
 	msg = dbus_message_new_method_call(BLUEZ_SERVICE, "/org/bluez",
 			BLUEZ_PROFILE_MGMT_INTERFACE, "UnregisterProfile");
@@ -1086,6 +1181,10 @@ void bluetooth_unregister_profile(const char *object)
 	dbus_pending_call_unref(c);
 
 	dbus_message_unref(msg);
+
+	g_hash_table_remove(external_profile_hash, object);
+
+	bluetooth_unref();
 }
 
 struct server *bluetooth_register_server(guint8 channel, const char *sdp_record,
