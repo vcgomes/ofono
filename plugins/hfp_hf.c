@@ -58,6 +58,7 @@
 static DBusConnection *connection;
 static GHashTable *modem_hash = NULL;
 static GHashTable *hfp_hash = NULL;
+static struct server *server = NULL;
 
 struct hfp_data {
 	struct hfp_slc_info info;
@@ -495,6 +496,25 @@ static struct bluetooth_profile hfp_hf = {
 	.set_alias	= hfp_hf_set_alias,
 };
 
+static void sco_server_cb(GIOChannel *io, GError *gerr, gpointer user_data)
+{
+	char src_addr[18], dst_addr[18];
+	int sk;
+
+	if (gerr) {
+		ofono_error("SCO connect: %s", gerr->message);
+		goto fail;
+	}
+
+	sk = g_io_channel_unix_get_fd(io);
+	if (bluetooth_get_address(sk, src_addr, dst_addr) < 0)
+		goto fail;
+
+	DBG("SCO: %s < %s", src_addr, dst_addr);
+fail:
+	g_io_channel_shutdown(io, TRUE, NULL);
+}
+
 static int hfp_init(void)
 {
 	int err;
@@ -504,6 +524,10 @@ static int hfp_init(void)
 
 	connection = ofono_dbus_get_connection();
 
+	server = bluetooth_register_sco(sco_server_cb, NULL);
+	if (server == NULL)
+		return -EIO;
+
 	/* Registers External Profile handler */
 	if (!g_dbus_register_interface(connection, HFP_EXT_PROFILE_PATH,
 					BLUEZ_PROFILE_INTERFACE,
@@ -511,15 +535,19 @@ static int hfp_init(void)
 					NULL, NULL, NULL)) {
 		ofono_error("Register Profile interface failed: %s",
 							HFP_EXT_PROFILE_PATH);
+		bluetooth_unregister_sco(server);
 		return -EIO;
 	}
 
 	err = ofono_modem_driver_register(&hfp_driver);
-	if (err < 0)
+	if (err < 0) {
+		bluetooth_unregister_sco(server);
 		return err;
+	}
 
 	err = bluetooth_register_uuid(HFP_AG_UUID, &hfp_hf);
 	if (err < 0) {
+		bluetooth_unregister_sco(server);
 		g_dbus_unregister_interface(connection, HFP_EXT_PROFILE_PATH,
 						BLUEZ_PROFILE_INTERFACE);
 		ofono_modem_driver_unregister(&hfp_driver);
@@ -529,6 +557,7 @@ static int hfp_init(void)
 	err = bluetooth_register_profile(HFP_HS_UUID, "hfp_hf",
 						HFP_EXT_PROFILE_PATH);
 	if (err < 0) {
+		bluetooth_unregister_sco(server);
 		g_dbus_unregister_interface(connection, HFP_EXT_PROFILE_PATH,
 						BLUEZ_PROFILE_INTERFACE);
 		bluetooth_unregister_uuid(HFP_AG_UUID);
@@ -552,6 +581,7 @@ static void hfp_exit(void)
 	bluetooth_unregister_profile(HFP_EXT_PROFILE_PATH);
 	bluetooth_unregister_uuid(HFP_AG_UUID);
 	ofono_modem_driver_unregister(&hfp_driver);
+	bluetooth_unregister_sco(server);
 
 	g_hash_table_destroy(modem_hash);
 	g_hash_table_destroy(hfp_hash);
