@@ -60,6 +60,11 @@ static GHashTable *modem_hash = NULL;
 static GHashTable *hfp_hash = NULL;
 static struct server *server = NULL;
 
+struct bt_hfp_address {
+	gchar src[18];
+	gchar dst[18];
+};
+
 struct hfp_data {
 	struct hfp_slc_info info;
 	gchar *device_address;
@@ -496,9 +501,26 @@ static struct bluetooth_profile hfp_hf = {
 	.set_alias	= hfp_hf_set_alias,
 };
 
+static gboolean modem_bt_address_cmp(gpointer key, gpointer value,
+							gpointer user_data)
+{
+	struct ofono_modem *modem = value;
+	struct bt_hfp_address *btaddr = user_data;
+	struct hfp_data *hfp_data = ofono_modem_get_data(modem);
+
+	if (g_strcmp0(btaddr->src, hfp_data->adapter_address) != 0)
+		return FALSE;
+
+	if (g_strcmp0(btaddr->dst, hfp_data->device_address) != 0)
+		return FALSE;
+	else
+		return TRUE;
+}
+
 static void sco_server_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 {
-	char src_addr[18], dst_addr[18];
+	struct ofono_modem *modem;
+	struct bt_hfp_address btaddr;
 	int sk;
 
 	if (gerr) {
@@ -507,10 +529,17 @@ static void sco_server_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 	}
 
 	sk = g_io_channel_unix_get_fd(io);
-	if (bluetooth_get_address(sk, src_addr, dst_addr) < 0)
+	if (bluetooth_get_address(sk, btaddr.src, btaddr.dst) < 0)
 		goto fail;
 
-	DBG("SCO: %s < %s", src_addr, dst_addr);
+	modem = g_hash_table_find(modem_hash, modem_bt_address_cmp, &btaddr);
+	if (modem == NULL) {
+		DBG("Headset not connected, refusing SCO: %s < %s", btaddr.src, btaddr.dst);
+		goto fail;
+	} else
+		DBG("accepted SCO: %s < %s", btaddr.src, btaddr.dst);
+
+	return;
 fail:
 	g_io_channel_shutdown(io, TRUE, NULL);
 }
