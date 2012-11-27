@@ -60,6 +60,13 @@ static GHashTable *modem_hash = NULL;
 static GHashTable *hfp_hash = NULL;
 static struct server *server = NULL;
 
+struct media_endpoint {
+	gchar *owner;
+	gchar *path;
+	guint8 codec;
+	guint8 capabilities;
+};
+
 struct bt_hfp_address {
 	gchar src[18];
 	gchar dst[18];
@@ -72,7 +79,33 @@ struct hfp_data {
 	gchar *device_alias;
 	gchar *device_path;
 	DBusMessage *slc_msg;
+	GSList *endpoints;
 };
+
+static struct media_endpoint *media_endpoint_new(const gchar *owner,
+						const gchar *path,
+						guint8 codec,
+						guint8 capabilities)
+{
+	struct media_endpoint *endpoint;
+
+	endpoint = g_new0(struct media_endpoint, 1);
+	endpoint->owner = g_strdup(owner);
+	endpoint->path = g_strdup(path);
+	endpoint->codec = codec;
+	endpoint->capabilities = capabilities;
+
+	return endpoint;
+}
+
+static void media_endpoint_free(gpointer data)
+{
+	struct media_endpoint *endpoint = data;
+
+	g_free(endpoint->owner);
+	g_free(endpoint->path);
+	g_free(endpoint);
+}
 
 static void hfp_data_free(gpointer user_data)
 {
@@ -82,6 +115,7 @@ static void hfp_data_free(gpointer user_data)
 	g_free(hfp_data->adapter_address);
 	g_free(hfp_data->device_alias);
 	g_free(hfp_data->device_path);
+	g_slist_free_full(hfp_data->endpoints, media_endpoint_free);
 	g_free(hfp_data);
 }
 
@@ -127,6 +161,75 @@ static void parse_guint16(DBusMessageIter *iter, gpointer user_data)
 		return;
 
 	dbus_message_iter_get_basic(iter, value);
+}
+
+static void parse_byte(DBusMessageIter *iter, gpointer user_data)
+{
+	guint8 *value = user_data;
+
+	if (dbus_message_iter_get_arg_type(iter) !=  DBUS_TYPE_BYTE)
+		return;
+
+	dbus_message_iter_get_basic(iter, value);
+}
+
+static void parse_string(DBusMessageIter *iter, gpointer user_data)
+{
+	char **str = user_data;
+	int arg_type = dbus_message_iter_get_arg_type(iter);
+
+	if (arg_type != DBUS_TYPE_OBJECT_PATH && arg_type != DBUS_TYPE_STRING)
+		return;
+
+	dbus_message_iter_get_basic(iter, str);
+}
+
+static void parse_media_endpoints(DBusMessageIter *array, gpointer user_data)
+{
+	GSList **endpoints = user_data;
+	struct media_endpoint *endpoint;
+	const gchar *path, *owner;
+	guint8 codec, capabilities;
+	DBusMessageIter dict, variant, entry;
+
+	if (dbus_message_iter_get_arg_type(array) != DBUS_TYPE_ARRAY)
+		return;
+
+	dbus_message_iter_recurse(array, &dict);
+
+	while (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_DICT_ENTRY) {
+		path = NULL;
+		codec = 0x00;
+		capabilities = 0x00;
+
+		dbus_message_iter_recurse(&dict, &entry);
+		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_STRING)
+			return;
+
+		dbus_message_iter_get_basic(&entry, &owner);
+
+		dbus_message_iter_next(&entry);
+
+		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_VARIANT)
+			return;
+
+		dbus_message_iter_recurse(&entry, &variant);
+
+		bluetooth_parse_properties(&variant,
+				"Path", parse_string, &path,
+				"Codec", parse_byte, &codec,
+				"Capabilities", parse_byte, &capabilities,
+				NULL);
+
+		dbus_message_iter_next(&dict);
+
+		endpoint = media_endpoint_new(owner, path, codec,
+							capabilities);
+		*endpoints = g_slist_append(*endpoints, endpoint);
+
+		DBG("Media Endpoint %s %s codec:0x%02X Capabilities:0x%02X",
+					owner, path, codec, capabilities);
+	}
 }
 
 static void hfp_debug(const char *str, void *user_data)
@@ -321,6 +424,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 {
 	struct hfp_data *hfp_data;
 	const char *device;
+	GSList *endpoints = NULL;
 	DBusMessageIter entry;
 	int fd, err;
 	guint16 version = 0x0105, features = 0x0000;
@@ -345,9 +449,10 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	dbus_message_iter_next(&entry);
 
 	bluetooth_parse_properties(&entry,
-					"Version", parse_guint16, &version,
-					"Features", parse_guint16, &features,
-					NULL);
+			"Version", parse_guint16, &version,
+			"Features", parse_guint16, &features,
+			"MediaEndpoints", parse_media_endpoints, &endpoints,
+			NULL);
 
 	hfp_data = g_hash_table_lookup(hfp_hash, device);
 	if (hfp_data == NULL) {
@@ -358,15 +463,20 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 		 * the Bluetooth device creation finishes.
 		 */
 		if (bluetooth_get_address(fd, adapter_address,
-							device_address) < 0)
+							device_address) < 0) {
+			g_slist_free_full(endpoints, media_endpoint_free);
 			return g_dbus_create_error(msg,
 					BLUEZ_ERROR_INTERFACE ".Rejected",
 					"Invalid arguments in method call");
+		}
+
 
 		hfp_data = hfp_data_new(adapter_address, device_address,
 						device, device_address);
 		g_hash_table_insert(hfp_hash, g_strdup(device), hfp_data);
 	}
+
+	hfp_data->endpoints = endpoints;
 
 	DBG("hfp_data: %p SLC FD: %d Version: 0x%04x Features: 0x%04x",
 					hfp_data, fd, version, features);
