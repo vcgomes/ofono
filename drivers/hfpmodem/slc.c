@@ -306,10 +306,21 @@ static void brsf_cb(gboolean ok, GAtResult *result, gpointer user_data)
 
 	if (info->ag_features & HFP_AG_FEATURE_CODEC_NEGOTIATION &&
 			info->hf_features & HFP_HF_FEATURE_CODEC_NEGOTIATION) {
+		GString *str = g_string_new("AT+BAC=");
+		int i;
+
+		for (i = 0; i < MAX_CODECS && info->codecs[i]; i++) {
+			g_string_append_printf(str, "%d", info->codecs[i]);
+			if (info->codecs[i + 1])
+				str = g_string_append(str, ",");
+		}
 
 		slc_establish_data_ref(sed);
-		g_at_chat_send(info->chat, "AT+BAC=1", NULL, bac_cb, sed,
+		g_at_chat_send(info->chat, str->str, NULL, bac_cb, sed,
 						slc_establish_data_unref);
+
+		g_string_free(str, TRUE);
+
 		return;
 	}
 
