@@ -80,6 +80,7 @@ struct hfp_data {
 	gchar *device_path;
 	guint8 current_codec;
 	DBusMessage *slc_msg;
+	GIOChannel *slcio;
 	GSList *endpoints;
 };
 
@@ -123,6 +124,11 @@ static void media_endpoint_read_codecs(GSList *endpoints, guint8 *codecs,
 static void hfp_data_free(gpointer user_data)
 {
 	struct hfp_data *hfp_data = user_data;
+
+	if (hfp_data->slcio) {
+		g_io_channel_shutdown(hfp_data->slcio, TRUE, NULL);
+		g_io_channel_unref(hfp_data->slcio);
+	}
 
 	g_free(hfp_data->device_address);
 	g_free(hfp_data->adapter_address);
@@ -338,18 +344,19 @@ static void hfp_disconnected_cb(gpointer user_data)
 	struct ofono_modem *modem = user_data;
 	struct hfp_data *data = ofono_modem_get_data(modem);
 
-	ofono_modem_set_powered(modem, FALSE);
+	DBG("HFP disconnected");
 
 	g_at_chat_unref(data->info.chat);
 	data->info.chat = NULL;
 
+	ofono_modem_set_powered(modem, FALSE);
 	g_hash_table_remove(modem_hash, data->device_path);
-
+	g_hash_table_remove(hfp_hash, data->device_path);
 	ofono_modem_remove(modem);
 }
 
 /* either oFono or Phone could request SLC connection */
-static int service_level_connection(struct ofono_modem *modem, int fd)
+static GIOChannel *service_level_connection(struct ofono_modem *modem, int fd, int *err)
 {
 	struct hfp_data *data = ofono_modem_get_data(modem);
 	GIOChannel *io;
@@ -360,16 +367,19 @@ static int service_level_connection(struct ofono_modem *modem, int fd)
 	if (io == NULL) {
 		ofono_error("Service level connection failed: %s (%d)",
 			strerror(errno), errno);
-		return -EIO;
+		*err = -EIO;
+		return NULL;
 	}
 
 	syntax = g_at_syntax_new_gsm_permissive();
 	chat = g_at_chat_new(io, syntax);
 	g_at_syntax_unref(syntax);
-	g_io_channel_unref(io);
+	g_io_channel_set_close_on_unref(io, TRUE);
 
-	if (chat == NULL)
-		return -ENOMEM;
+	if (chat == NULL) {
+		*err = -ENOMEM;
+		goto fail;
+	}
 
 	g_at_chat_set_disconnect_function(chat, hfp_disconnected_cb, modem);
 
@@ -379,7 +389,13 @@ static int service_level_connection(struct ofono_modem *modem, int fd)
 	data->info.chat = chat;
 	hfp_slc_establish(&data->info, slc_established, slc_failed, modem);
 
-	return -EINPROGRESS;
+	*err = -EINPROGRESS;
+
+	return io;
+
+fail:
+	g_io_channel_unref(io);
+	return NULL;
 }
 
 static int modem_register(const char *device, struct hfp_data *hfp_data,
@@ -387,6 +403,7 @@ static int modem_register(const char *device, struct hfp_data *hfp_data,
 {
 	struct ofono_modem *modem;
 	char buf[256];
+	int err = 0;
 
 	/* We already have this device in our hash, ignore */
 	if (g_hash_table_lookup(modem_hash, device) != NULL)
@@ -408,7 +425,9 @@ static int modem_register(const char *device, struct hfp_data *hfp_data,
 
 	hfp_slc_info_init(&hfp_data->info, version, codecs);
 
-	return service_level_connection(modem, fd);
+	hfp_data->slcio = service_level_connection(modem, fd, &err);
+
+	return err;
 }
 
 static int hfp_hf_probe(const char *device, const char *dev_addr,
@@ -435,11 +454,15 @@ static gboolean hfp_remove_modem(gpointer key, gpointer value,
 					gpointer user_data)
 {
 	struct ofono_modem *modem = value;
+	struct hfp_data *data = ofono_modem_get_data(modem);
 	const char *device = key;
 	const char *prefix = user_data;
 
 	if (prefix && g_str_has_prefix(device, prefix) == FALSE)
 		return FALSE;
+
+	g_at_chat_unref(data->info.chat);
+	data->info.chat = NULL;
 
 	ofono_modem_remove(modem);
 
@@ -585,10 +608,34 @@ static DBusMessage *profile_cancel(DBusConnection *conn,
 static DBusMessage *profile_disconnection(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
+	struct hfp_data *hfp_data;
+	const gchar *device = NULL;
+	DBusMessageIter entry;
+
 	DBG("Profile handler RequestDisconnection");
-	return g_dbus_create_error(msg, BLUEZ_ERROR_INTERFACE
-					".NotImplemented",
-					"Implementation not provided");
+
+	if (dbus_message_iter_init(msg, &entry) == FALSE)
+		goto error;
+
+	if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_OBJECT_PATH)
+		goto error;
+
+	dbus_message_iter_get_basic(&entry, &device);
+
+	hfp_data = g_hash_table_lookup(hfp_hash, device);
+	if (hfp_data == NULL)
+		goto error;
+
+	g_io_channel_shutdown(hfp_data->slcio, TRUE, NULL);
+	g_io_channel_unref(hfp_data->slcio);
+	hfp_data->slcio = NULL;
+
+	return dbus_message_new_method_return(msg);
+
+error:
+	return g_dbus_create_error(msg,
+			BLUEZ_ERROR_INTERFACE ".Rejected",
+			"Invalid arguments in method call");
 }
 
 static const GDBusMethodTable profile_methods[] = {
@@ -629,12 +676,7 @@ static int hfp_enable(struct ofono_modem *modem)
 
 static int hfp_disable(struct ofono_modem *modem)
 {
-	struct hfp_data *data = ofono_modem_get_data(modem);
-
 	DBG("%p", modem);
-
-	g_at_chat_unref(data->info.chat);
-	data->info.chat = NULL;
 
 	ofono_modem_set_powered(modem, FALSE);
 
