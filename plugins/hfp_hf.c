@@ -78,6 +78,7 @@ struct hfp_data {
 	gchar *adapter_address;
 	gchar *device_alias;
 	gchar *device_path;
+	guint8 current_codec;
 	DBusMessage *slc_msg;
 	GSList *endpoints;
 };
@@ -239,11 +240,55 @@ static void hfp_debug(const char *str, void *user_data)
 	ofono_info("%s%s", prefix, str);
 }
 
+static void bcs_notify(GAtResult *result, gpointer user_data)
+{
+	struct hfp_data *data = user_data;
+	struct hfp_slc_info *info = &data->info;
+	GAtResultIter iter;
+	GString *str;
+	int i, value;
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+BCS:"))
+		return;
+
+	if (!g_at_result_iter_next_number(&iter, &value))
+		return;
+
+	for (i = 0; i < MAX_CODECS && info->codecs[i]; i++) {
+		if (info->codecs[i] == value) {
+			char buf[64];
+
+			data->current_codec = value;
+
+			snprintf(buf, sizeof(buf), "AT+BCS=%d", value);
+			g_at_chat_send(info->chat, buf, NULL, NULL,
+							NULL, NULL);
+			return;
+		}
+	}
+
+	str = g_string_new("AT+BAC=");
+
+	for (i = 0; i < MAX_CODECS && info->codecs[i]; i++) {
+		g_string_append_printf(str, "%d", info->codecs[i]);
+		if (info->codecs[i + 1])
+			str = g_string_append(str, ",");
+	}
+
+	g_at_chat_send(info->chat, str->str, NULL, NULL, NULL, NULL);
+	g_string_free(str, TRUE);
+}
+
 static void slc_established(gpointer userdata)
 {
 	struct ofono_modem *modem = userdata;
 	struct hfp_data *data = ofono_modem_get_data(modem);
+	struct hfp_slc_info *info = &data->info;
 	DBusMessage *msg;
+
+	g_at_chat_register(info->chat, "+BCS:", bcs_notify, FALSE, data, NULL);
 
 	ofono_modem_set_powered(modem, TRUE);
 
