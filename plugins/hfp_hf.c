@@ -326,7 +326,7 @@ static int service_level_connection(struct ofono_modem *modem, int fd)
 }
 
 static int modem_register(const char *device, struct hfp_data *hfp_data,
-							int fd, guint16 version)
+			int fd, guint16 version, guint8 codecs[MAX_CODECS])
 {
 	struct ofono_modem *modem;
 	char buf[256];
@@ -349,7 +349,7 @@ static int modem_register(const char *device, struct hfp_data *hfp_data,
 
 	g_hash_table_insert(modem_hash, g_strdup(device), modem);
 
-	hfp_slc_info_init(&hfp_data->info, version);
+	hfp_slc_info_init(&hfp_data->info, version, codecs);
 
 	return service_level_connection(modem, fd);
 }
@@ -428,6 +428,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	DBusMessageIter entry;
 	int fd, err;
 	guint16 version = 0x0105, features = 0x0000;
+	guint8 codecs[MAX_CODECS];
 
 	DBG("Profile handler NewConnection");
 
@@ -481,7 +482,10 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	DBG("hfp_data: %p SLC FD: %d Version: 0x%04x Features: 0x%04x",
 					hfp_data, fd, version, features);
 
-	err = modem_register(device, hfp_data, fd, version);
+	memset(codecs, 0, sizeof(codecs));
+	codecs[0] = HFP_CODEC_CVSD;
+
+	err = modem_register(device, hfp_data, fd, version, codecs);
 	if (err < 0 && err != -EINPROGRESS)
 		return __ofono_error_failed(msg);
 

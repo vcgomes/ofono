@@ -52,7 +52,8 @@ struct slc_establish_data {
 	gpointer userdata;
 };
 
-void hfp_slc_info_init(struct hfp_slc_info *info, guint16 version)
+void hfp_slc_info_init(struct hfp_slc_info *info, guint16 version,
+					guint8 codecs[MAX_CODECS])
 {
 	info->ag_features = 0;
 	info->ag_mpty_features = 0;
@@ -71,6 +72,7 @@ void hfp_slc_info_init(struct hfp_slc_info *info, guint16 version)
 		goto done;
 
 	info->hf_features |= HFP_HF_FEATURE_CODEC_NEGOTIATION;
+	memcpy(info->codecs, codecs, sizeof(info->codecs));
 
 done:
 	memset(info->cind_val, 0, sizeof(info->cind_val));

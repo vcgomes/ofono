@@ -27,6 +27,8 @@
 #define AG_CHLD_3	0x20
 #define AG_CHLD_4	0x40
 
+#define MAX_CODECS	16
+
 enum hfp_version {
 	HFP_VERSION_1_5 =	0x0105,
 	HFP_VERSION_1_6 =	0x0106,
@@ -44,6 +46,11 @@ enum hfp_indicator {
 	HFP_INDICATOR_LAST
 };
 
+enum hfp_codec {
+	HFP_CODEC_CVSD = 0x1,
+	HFP_CODEC_MSBC = 0x2,
+};
+
 typedef void (*hfp_slc_cb_t)(void *userdata);
 
 struct hfp_slc_info {
@@ -53,9 +60,11 @@ struct hfp_slc_info {
 	unsigned int hf_features;
 	unsigned char cind_pos[HFP_INDICATOR_LAST];
 	unsigned int cind_val[HFP_INDICATOR_LAST];
+	unsigned char codecs[MAX_CODECS];
 };
 
-void hfp_slc_info_init(struct hfp_slc_info *info, guint16 version);
+void hfp_slc_info_init(struct hfp_slc_info *info, guint16 version,
+					guint8 codecs[MAX_CODECS]);
 void hfp_slc_info_free(struct hfp_slc_info *info);
 
 void hfp_slc_establish(struct hfp_slc_info *info, hfp_slc_cb_t connect_cb,

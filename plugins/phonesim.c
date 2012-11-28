@@ -847,6 +847,7 @@ static int localhfp_enable(struct ofono_modem *modem)
 	GAtSyntax *syntax;
 	GAtChat *chat;
 	const char *address;
+	unsigned char codecs[MAX_CODECS];
 	int sk, port;
 
 	address = ofono_modem_get_string(modem, "Address");
@@ -880,7 +881,10 @@ static int localhfp_enable(struct ofono_modem *modem)
 
 	g_at_chat_set_disconnect_function(chat, slc_failed, modem);
 
-	hfp_slc_info_init(info, HFP_VERSION_LATEST);
+	memset(codecs, 0, sizeof(codecs));
+	codecs[0] = HFP_CODEC_CVSD;
+
+	hfp_slc_info_init(info, HFP_VERSION_LATEST, codecs);
 	info->chat = chat;
 	hfp_slc_establish(info, slc_established, slc_failed, modem);
 
