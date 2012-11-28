@@ -108,6 +108,18 @@ static void media_endpoint_free(gpointer data)
 	g_free(endpoint);
 }
 
+static void media_endpoint_read_codecs(GSList *endpoints, guint8 *codecs,
+								size_t size)
+{
+	GSList *l;
+	unsigned int i;
+
+	for (l = endpoints, i = 0; l && i < size; l = g_slist_next(l), i++) {
+		struct media_endpoint *endpoint = l->data;
+		codecs[i] = endpoint->codec;
+	}
+}
+
 static void hfp_data_free(gpointer user_data)
 {
 	struct hfp_data *hfp_data = user_data;
@@ -500,6 +512,11 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 			"MediaEndpoints", parse_media_endpoints, &endpoints,
 			NULL);
 
+	if (endpoints == NULL) {
+		DBG("Media Endpoint missing");
+		goto error;
+	}
+
 	hfp_data = g_hash_table_lookup(hfp_hash, device);
 	if (hfp_data == NULL) {
 		char adapter_address[18], device_address[18];
@@ -528,7 +545,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 					hfp_data, fd, version, features);
 
 	memset(codecs, 0, sizeof(codecs));
-	codecs[0] = HFP_CODEC_CVSD;
+	media_endpoint_read_codecs(endpoints, codecs, sizeof(codecs));
 
 	err = modem_register(device, hfp_data, fd, version, codecs);
 	if (err < 0 && err != -EINPROGRESS)
