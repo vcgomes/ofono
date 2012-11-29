@@ -29,6 +29,7 @@
 
 #define OFONO_API_SUBJECT_TO_CHANGE
 #include <ofono/log.h>
+#include <ofono/dbus.h>
 
 #include "media.h"
 
@@ -43,7 +44,9 @@ struct media_endpoint {
 };
 
 struct media_transport {
+	int fd;
 	gchar *path;
+	gchar *device_path;
 	struct media_endpoint *endpoint;
 };
 
@@ -91,6 +94,8 @@ struct media_transport *media_transport_create(const gchar *device,
 
 	transport = g_new0(struct media_transport, 1);
 	transport->path = g_strdup_printf("%s/%d", device, fd);
+	transport->device_path = g_strdup(device);
+	transport->fd = fd;
 	/* Missing refcounting */
 	transport->endpoint = endpoint;
 
@@ -99,8 +104,32 @@ struct media_transport *media_transport_create(const gchar *device,
 
 void media_transport_remove(struct media_transport *transport)
 {
+	g_free(transport->device_path);
 	g_free(transport->path);
 	g_free(transport);
+}
+
+static void transport_get_properties(struct media_transport *transport,
+						DBusMessageIter *iter)
+{
+	struct media_endpoint *endpoint = transport->endpoint;
+	DBusMessageIter dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
+
+	ofono_dbus_dict_append(&dict, "Device", DBUS_TYPE_OBJECT_PATH,
+						&transport->device_path);
+
+	ofono_dbus_dict_append(&dict, "Codec", DBUS_TYPE_BYTE,
+						&endpoint->codec);
+
+	ofono_dbus_dict_append_array(&dict, "Configuration", DBUS_TYPE_BYTE,
+						&endpoint->capabilities);
+
+	dbus_message_iter_close_container(iter, &dict);
 }
 
 static void media_transport_free(void *user_data)
@@ -181,6 +210,7 @@ int media_transport_register(struct media_transport *transport,
 {
 	struct media_endpoint *endpoint = transport->endpoint;
 	DBusMessage *msg;
+	DBusMessageIter iter;
 	DBusPendingCall *c;
 
 	if (g_dbus_register_interface(conn, transport->path,
@@ -194,6 +224,17 @@ int media_transport_register(struct media_transport *transport,
 	msg = dbus_message_new_method_call(endpoint->owner, endpoint->path,
 						MEDIA_ENDPOINT_INTERFACE,
 						"SetConfiguration");
+	if (msg == NULL) {
+		ofono_error("Couldn't allocate D-Bus message");
+		return -ENOMEM;
+	}
+
+	dbus_message_iter_init_append(msg, &iter);
+
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH,
+							transport->path);
+
+	transport_get_properties(transport, &iter);
 
 	if (!dbus_connection_send_with_reply(conn, msg, &c, -1)) {
 		ofono_error("Sending SetConfiguration failed");
