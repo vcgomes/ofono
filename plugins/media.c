@@ -135,5 +135,3 @@ void media_transport_unregister(struct media_transport *transport)
 {
 	/* ClearConfiguration */
 }
-
-
