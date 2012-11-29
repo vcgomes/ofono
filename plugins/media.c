@@ -162,7 +162,23 @@ static DBusMessage *set_property(DBusConnection *conn, DBusMessage *msg,
 static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 								void *data)
 {
-	DBG("");
+	struct media_transport *transport = data;
+	struct media_endpoint *endpoint = transport->endpoint;
+	const char *accesstype, *sender;
+
+	if (!dbus_message_get_args(msg, NULL,
+				DBUS_TYPE_STRING, &accesstype,
+				DBUS_TYPE_INVALID))
+		return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+					".InvalidArguments",
+					"Invalid arguments in method call");
+
+	sender = dbus_message_get_sender(msg);
+
+	if (!g_str_equal(sender, endpoint->owner))
+		return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+						".NotAuthorized",
+						"Operation not authorized");
 
 	return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
 					".NotImplemented",
