@@ -75,7 +75,10 @@ struct hfp_data {
 	guint8 current_codec;
 	DBusMessage *slc_msg;
 	GIOChannel *slcio;
+	GIOChannel *scoio;
+	guint sco_watch;
 	GSList *endpoints;
+	struct media_transport *transport;
 };
 
 static void hfp_data_free(gpointer user_data)
@@ -85,6 +88,14 @@ static void hfp_data_free(gpointer user_data)
 	if (hfp_data->slcio) {
 		g_io_channel_shutdown(hfp_data->slcio, TRUE, NULL);
 		g_io_channel_unref(hfp_data->slcio);
+	}
+
+	if (hfp_data->sco_watch)
+		g_source_remove(hfp_data->sco_watch);
+
+	if (hfp_data->scoio) {
+		g_io_channel_shutdown(hfp_data->scoio, FALSE, NULL);
+		g_io_channel_unref(hfp_data->scoio);
 	}
 
 	g_free(hfp_data->device_address);
@@ -694,6 +705,62 @@ static gboolean modem_bt_address_cmp(gpointer key, gpointer value,
 		return TRUE;
 }
 
+static void transport_remove(gpointer user_data)
+{
+	struct hfp_data *data = user_data;
+
+	media_transport_unregister(data->transport);
+	media_transport_remove(data->transport);
+	data->transport = NULL;
+}
+
+static void transport_registered_cb(DBusPendingCall *call, gpointer user_data)
+{
+	struct hfp_data *data = user_data;
+	DBusMessage *reply;
+	struct DBusError derr;
+	dbus_bool_t ret;
+
+	DBG("");
+
+	reply = dbus_pending_call_steal_reply(call);
+
+	dbus_error_init(&derr);
+
+	ret = dbus_set_error_from_message(&derr, reply);
+
+	dbus_message_unref(reply);
+
+	if (ret == FALSE)
+		return;
+
+	ofono_error("%s: %s", derr.name, derr.message);
+	dbus_error_free(&derr);
+
+	g_source_remove(data->sco_watch);
+	data->sco_watch = 0;
+
+	if (data->scoio) {
+		g_io_channel_shutdown(data->scoio, FALSE, NULL);
+		g_io_channel_unref(data->scoio);
+		data->scoio = NULL;
+	}
+}
+
+static gboolean sco_watch(GIOChannel *io, GIOCondition cond, gpointer user_data)
+{
+	struct hfp_data *data = user_data;
+
+	DBG("");
+
+	data->sco_watch = 0;
+
+	g_io_channel_unref(data->scoio);
+	data->scoio = NULL;
+
+	return FALSE;
+}
+
 static void sco_server_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 {
 	struct ofono_modem *modem;
@@ -713,8 +780,33 @@ static void sco_server_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 	if (modem == NULL) {
 		DBG("Headset not connected, refusing SCO: %s < %s", btaddr.src, btaddr.dst);
 		goto fail;
-	} else
+	} else {
+		struct hfp_data *data = ofono_modem_get_data(modem);
+		struct media_endpoint *endpoint;
+		GIOCondition cond = G_IO_HUP | G_IO_ERR;
+
 		DBG("accepted SCO: %s < %s", btaddr.src, btaddr.dst);
+
+		if (data->endpoints == NULL) {
+			DBG("Dropping SCO: Media Endpoints not available");
+			goto fail;
+		}
+
+		data->sco_watch = g_io_add_watch_full(io, G_PRIORITY_DEFAULT,
+							cond, sco_watch, data,
+							transport_remove);
+		data->scoio = g_io_channel_ref(io);
+
+		endpoint = data->endpoints->data;
+		data->transport = media_transport_create(data->device_path,
+								endpoint, sk);
+		if (media_transport_register(data->transport, connection,
+					transport_registered_cb, data) < 0) {
+			media_transport_remove(data->transport);
+			data->transport = NULL;
+			goto fail;
+		}
+	}
 
 	return;
 fail:
