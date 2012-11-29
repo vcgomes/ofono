@@ -20,6 +20,7 @@
  */
 
 struct media_endpoint;
+struct media_transport;
 
 struct media_endpoint *media_endpoint_new(const gchar *owner,
 						const gchar *path,
@@ -29,3 +30,16 @@ struct media_endpoint *media_endpoint_new(const gchar *owner,
 void media_endpoint_free(gpointer data);
 
 void media_endpoint_read_codecs(GSList *endpoints, guint8 *codecs, size_t size);
+
+struct media_transport *media_transport_create(const gchar *device,
+					struct media_endpoint *endpoint,
+					int fd);
+
+void media_transport_remove(struct media_transport *transport);
+
+int media_transport_register(struct media_transport *transport,
+					DBusConnection *conn,
+					DBusPendingCallNotifyFunction cb,
+					gpointer user_data);
+
+void media_transport_unregister(struct media_transport *transport);
