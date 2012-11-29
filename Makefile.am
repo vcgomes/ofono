@@ -418,7 +418,8 @@ builtin_modules += sap
 builtin_sources += plugins/sap.c plugins/bluetooth.h
 
 builtin_modules += hfp
-builtin_sources += plugins/hfp_hf.c plugins/bluetooth.h
+builtin_sources += plugins/hfp_hf.c plugins/bluetooth.h \
+		   plugins/media.h plugins/media.c
 
 builtin_modules += hfp_ag
 builtin_sources += plugins/hfp_ag.c plugins/bluetooth.h

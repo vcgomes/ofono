@@ -47,6 +47,7 @@
 
 #include <drivers/hfpmodem/slc.h>
 
+#include "media.h"
 #include "bluetooth.h"
 
 #define HFP_EXT_PROFILE_PATH   "/bluetooth/profile/hfp_hf"
@@ -59,13 +60,6 @@ static DBusConnection *connection;
 static GHashTable *modem_hash = NULL;
 static GHashTable *hfp_hash = NULL;
 static struct server *server = NULL;
-
-struct media_endpoint {
-	gchar *owner;
-	gchar *path;
-	guint8 codec;
-	guint8 capabilities;
-};
 
 struct bt_hfp_address {
 	gchar src[18];
@@ -83,43 +77,6 @@ struct hfp_data {
 	GIOChannel *slcio;
 	GSList *endpoints;
 };
-
-static struct media_endpoint *media_endpoint_new(const gchar *owner,
-						const gchar *path,
-						guint8 codec,
-						guint8 capabilities)
-{
-	struct media_endpoint *endpoint;
-
-	endpoint = g_new0(struct media_endpoint, 1);
-	endpoint->owner = g_strdup(owner);
-	endpoint->path = g_strdup(path);
-	endpoint->codec = codec;
-	endpoint->capabilities = capabilities;
-
-	return endpoint;
-}
-
-static void media_endpoint_free(gpointer data)
-{
-	struct media_endpoint *endpoint = data;
-
-	g_free(endpoint->owner);
-	g_free(endpoint->path);
-	g_free(endpoint);
-}
-
-static void media_endpoint_read_codecs(GSList *endpoints, guint8 *codecs,
-								size_t size)
-{
-	GSList *l;
-	unsigned int i;
-
-	for (l = endpoints, i = 0; l && i < size; l = g_slist_next(l), i++) {
-		struct media_endpoint *endpoint = l->data;
-		codecs[i] = endpoint->codec;
-	}
-}
 
 static void hfp_data_free(gpointer user_data)
 {
