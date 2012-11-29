@@ -103,6 +103,77 @@ void media_transport_remove(struct media_transport *transport)
 	g_free(transport);
 }
 
+static void media_transport_free(void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	media_transport_remove(transport);
+}
+
+static DBusMessage *get_properties(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	DBG("");
+
+	return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+					".NotImplemented",
+					"Implementation not provided");
+}
+
+static DBusMessage *set_property(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	DBG("");
+
+	return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+					".NotImplemented",
+					"Implementation not provided");
+}
+
+static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	DBG("");
+
+	return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+					".NotImplemented",
+					"Implementation not provided");
+}
+
+static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	DBG("");
+
+	return g_dbus_create_error(msg, MEDIA_TRANSPORT_INTERFACE
+					".NotImplemented",
+					"Implementation not provided");
+}
+
+static const GDBusMethodTable transport_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_ASYNC_METHOD("Acquire",
+			GDBUS_ARGS({ "access_type", "s" }),
+			GDBUS_ARGS({ "fd", "h" }, { "mtu_r", "q" },
+							{ "mtu_w", "q" } ),
+			acquire) },
+	{ GDBUS_ASYNC_METHOD("Release",
+			GDBUS_ARGS({ "access_type", "s" }), NULL,
+			release ) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }),
+			NULL, set_property) },
+	{ },
+};
+
+static const GDBusSignalTable transport_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
+};
+
 int media_transport_register(struct media_transport *transport,
 					DBusConnection *conn,
 					DBusPendingCallNotifyFunction cb,
@@ -112,7 +183,13 @@ int media_transport_register(struct media_transport *transport,
 	DBusMessage *msg;
 	DBusPendingCall *c;
 
-	/* Register transport object */
+	if (g_dbus_register_interface(conn, transport->path,
+				MEDIA_TRANSPORT_INTERFACE, transport_methods,
+				transport_signals, NULL, transport,
+				media_transport_free) == FALSE) {
+		ofono_error("Could not register transport %s", transport->path);
+		return -EIO;
+	}
 
 	msg = dbus_message_new_method_call(endpoint->owner, endpoint->path,
 						MEDIA_ENDPOINT_INTERFACE,
