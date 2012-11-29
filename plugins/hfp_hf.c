@@ -671,7 +671,9 @@ static int hfp_enable(struct ofono_modem *modem)
 	if (ofono_modem_get_powered(modem))
 		return 0;
 
-	return -ENOTCONN;
+	ofono_modem_set_powered(modem, TRUE);
+
+	return 0;
 }
 
 static int hfp_disable(struct ofono_modem *modem)
