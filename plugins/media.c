@@ -126,7 +126,7 @@ static void transport_get_properties(struct media_transport *transport,
 	ofono_dbus_dict_append(&dict, "Codec", DBUS_TYPE_BYTE,
 						&endpoint->codec);
 
-	ofono_dbus_dict_append_array(&dict, "Configuration", DBUS_TYPE_BYTE,
+	ofono_dbus_dict_append(&dict, "Configuration", DBUS_TYPE_BYTE,
 						&endpoint->capabilities);
 
 	dbus_message_iter_close_container(iter, &dict);
@@ -248,7 +248,7 @@ int media_transport_register(struct media_transport *transport,
 	dbus_message_iter_init_append(msg, &iter);
 
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH,
-							transport->path);
+							&transport->path);
 
 	transport_get_properties(transport, &iter);
 
